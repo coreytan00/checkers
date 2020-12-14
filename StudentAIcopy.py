@@ -6,17 +6,19 @@ from collections import defaultdict
 import math
 import copy
 import time
+
 #The following part should be completed by students.
 #Students can modify anything except the class name and exisiting functions and varibles.
 
 class Node():
     
-    def __init__(self,parent):
-    	self.parent = parent
-    	self.children = {} #{ action:Node, action:Node}
-    	self.N = 0
-    	self.Q = 0 #rewards
+    def __init__(self,parent,prob):
         self.u = 0
+        self.parent = parent
+        self.children = {}
+        self.N = 0
+        self.Q = 0
+        self.p = prob
 
     def find_children(self):
         #find all children
@@ -32,89 +34,105 @@ class Node():
 
     def is_terminal(self):
         #true if no children
-        return len(self.children)==0
-
-    def make_sim_move(self, move):
-        b2 = copy.deepcopy(self.board)
-        b2.make_move(move, self.color)
-        b2.color = self.turn_rotation()
-        return b2
+        return self.children=={}
     
     def turn_rotation(self):
         return 2 if self.color==1 else 1
 
     def update(self, value):
-    	if self.parent != None:
-    		self.parent.update(value*-1)
-    	self.N +=1
-    	self.Q += 1*(value-self.Q)/self.N
+        if self.parent != None:
+            self.parent.update(-value)
+        self.N += 1
+        self.Q += 1*(value-self.Q)/self.N
 
     def select(self, puct):
-    	return max(self.children.items(), key=lambda x:x[1].get_value(puct))
+        return max(self.children.items(), key=lambda x:x[1].get_value(puct))
 
     def get_value(self, puct):
-    	self.u = puct * math.sqrt(self.parent.visits) / (self.N+1)
-    	return self.Q+self.u
+        self.u = puct * self.p * math.sqrt(self.parent.N) / (self.N+1)
+        return self.Q+self.u
 
 class MCTS():
     
-    def __init__(self, color):
-        self.root = Node(None)
+    def __init__(self):
+        self.root = Node(None,1)
+
+    def update_tree(self, prev_move):
+        #has issues
+        if self.root.children.get(prev_move) != None:
+            self.root = self.root.children[prev_move]
+            self.parent = None
+        else:
+            self.root = Node(None,1)
         
     def search(self, board, turn):
         #rollout
-        node,board = self._select(node,board,turn)
-        win = board.is_win()
-
-        if win==0 and len(board.all_moves)>0:
-        	self._expand(node, board.all_moves)
+        node = self.root
+        node,board,turn,actions = self._select(node,board,turn)
+        win = board.is_win(turn)
+        
+        if win==0:
+            self._expand(node,actions)
 
         win_value = self._simulate(board, turn)
         self._backprop(node, win_value)
 
-        #print("wins:", self.win[node])
-        #print("out of:", self.count[node])
-        #print("number of children:", len(self.children[node]))
-
     def _select(self, node, board, turn):
         while True:
-        	if node.is_terminal(): #no children
-        		break
-        	puct = 5
-        	action = node.select(puct)
-        	board.make_move(action, turn)
-        	if turn == 1:
-        		turn = 2
-        	else:
-        		turn = 1
-        	board.all_moves = board.get_all_possible_moves()
- 
-        return node,board 
+            if node.is_terminal(): #no children
+                break
+            puct = 5
+            action,node = node.select(puct)
+            board.make_move(action, turn)
+            if turn == 1:
+                turn = 2
+            else:
+                turn = 1
+            board_moves = []
+            for m in board.get_all_possible_moves(turn):
+                board_moves.extend(m)
+            board.all_moves = tuple(board_moves)
+        actions = []
+        for m in board.all_moves:
+            actions.append([m,1/len(board.all_moves)])
+        return node,board,turn,actions 
 
-    def _expand(self, node, moves):
+    def _expand(self, node, actions):
         #expand on the node - add to children
-        for move in moves:
-        	if node.children.get(move)==None:
-        		node.children[move] = Node(self) 
+        for m,prob in actions:
+            if node.children.get(m)==None:
+                node.children[m] = Node(node,prob) 
 
-    def _simulate(self, board, turn):
+    def _simulate(self, board, p):
         #return reward for random simulation
+        #print("SIMULATION BEGIN")
         win_value = 0
-        for i in range(500): # set a limit. if it hits, return 0 instead.
-            win_value = board.is_win()
+        p2 = p
+        for i in range(800): # set a limit. if it hits, return 0 instead.
+            #board.show_board()
+            #print("it is player: ", p2,"'s turn above")
+            #win_value = self.game_value(board,p2)
+            win_value = board.is_win(p2)
             if win_value!=0:
                 break
-            move = self.random_child(board, turn)
-            board.make_move(move, turn)
-            if turn == 1:
-        		turn = 2
-        	else:
-        		turn = 1
-        	board.all_moves = board.get_all_possible_moves()
-        #if win_value == 1, that means BLACK won. if 2, WHITE won.
-       	if win_value == 0:
-       		return 0
-        return 1 if win_value==turn else -1
+            if len(board.all_moves)==0:
+                break
+            move = self.random_child(board, p2)
+            board.make_move(move, p2)
+            if p2 == 1:
+                p2 = 2
+            else:
+                p2 = 1
+            board_moves = []
+            for m in board.get_all_possible_moves(p2):
+                board_moves.extend(m)
+            board.all_moves = tuple(board_moves)
+       
+        if win_value == 0:
+       	    return 0
+        #print("winvalue is: ", win_value)
+        #print("winvalue==p? on turn", p, win_value==p)
+        return 1 if win_value==p else -1
 
     def _backprop(self, node, win_value):
         node.update(win_value)
@@ -126,18 +144,25 @@ class MCTS():
         #add second key later
         best_node = max(ucb_lst, key=lambda x:x[1])[0]
         return best_node
+    
+    def game_value(self, board, turn):
+        winner= board.is_win(self.turn_rotation(turn))
+        return winner
+
+    def turn_rotation(self, turn):
+        return 2 if turn==1 else 1    
 
     def random_child(self, board, turn):
-        moves = board.get_all_possible_moves(turn)
-        index = randint(0,len(moves)-1)
-        inner_index = randint(0,len(moves[index])-1)
-        move = moves[index][inner_index]
+        index = randint(0,len(board.all_moves)-1)
+        move = board.all_moves[index]
         return move
 
     def best_child(self):
-    	print("in best child")
-    	print("self.root.children: ", self.root.children)
-    	return max(self.root.children.items(), key=lambda x:x[1].N)[0] #max by number of visits, and get move
+        #for move, child in self.root.children.items():
+        #    print(move, child.N, child.Q)
+        a = max(self.root.children.items(), key=lambda x:x[1].N) #max by number of visits, and get move
+        #print("what's returned:", a[0], a[1].N, a[1].Q)
+        return a[0]
 
 class StudentAI():
 
@@ -147,14 +172,13 @@ class StudentAI():
         self.p = p
         self.board = Board(col,row,p)
         self.board.initialize_game()
-        self.color = ''
         self.opponent = {1:2,2:1}
         self.color = 2
-        self.tree = MCTS(self.color)
         self.max_time = 480
         self.remaining_time = self.max_time
 
     def get_move(self,move):
+        now = time.time()
         if len(move) != 0:
             self.board.make_move(move,self.opponent[self.color])
         else:
@@ -165,26 +189,38 @@ class StudentAI():
         
         #optimize 1 moves
         moves = self.board.get_all_possible_moves(self.color)
-        self.board.all_moves = moves
+        board_moves = []
+        for m in moves:
+            board_moves.extend(m)
+        self.board.all_moves = tuple(board_moves)
         if len(moves)==1 and len(moves[0])==1:
             move = moves[0][0]
         else:
-            tree = MCTS(self.color)
-            move = self.playout(tree,self.board,move)
+            if self.remaining_time<30:
+                iter_time = 3
+            else:
+                iter_time = 15 #default
+            tree = MCTS()
+            move = self.playout(tree,iter_time,self.board,move,self.color)
 
+        #self.tree.update_tree(move)
         self.board.make_move(move,self.color)
+        end = time.time()
+        self.remaining_time -=(end-now)
         return move
 
-    def playout(self,tree,board,move):
+    def playout(self,tree,iter_time,board,move,turn):
         now = time.time()
         timer = 0
         i = 0
-        while timer<=15:
+        while timer<=iter_time:
             end = time.time()
-            board = copy.deepcopy(board)
-            tree.search(board)
+            board2 = copy.deepcopy(board)
+            #print("AI TURN:", turn)
+            tree.search(board2,turn)
+            #print("iteration: ", i)
             i += 1
-            if i>1500:
+            if i>1000:
                 break
             timer = end-now
         return tree.best_child()
